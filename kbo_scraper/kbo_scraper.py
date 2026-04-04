@@ -53,12 +53,15 @@ def main():
     if cfg['mqtt_username']: 
         client.username_pw_set(cfg['mqtt_username'], cfg['mqtt_password'])
     
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] MQTT 서버({cfg['mqtt_broker']}) 연결 시도 중...", flush=True)
     while True:
         try:
             client.connect(cfg['mqtt_broker'], cfg['mqtt_port'], 60)
             client.loop_start()
+            print("✅ MQTT 서버 연결 성공!", flush=True)
             break
-        except:
+        except Exception as e:
+            print(f"❌ MQTT 연결 실패, 5초 후 재시도... (원인: {e})", flush=True)
             time.sleep(5)
 
     while True:

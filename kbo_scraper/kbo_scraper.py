@@ -79,7 +79,7 @@ def main():
             try:
                 WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.CSS_SELECTOR, "li.game-cont")))
             except TimeoutException:
-                print("경기 요소 로딩 시간 초과 (오늘 경기가 없거나 KBO 사이트 지연)")
+                print("경기 요소 로딩 시간 초과")
 
             time.sleep(3)
             soup = BeautifulSoup(driver.page_source, 'html.parser')
@@ -111,32 +111,28 @@ def main():
                     if not (a_score.isdigit() and h_score.isdigit()):
                         a_div = item.select_one('div.team.away div.score')
                         h_div = item.select_one('div.team.home div.score')
-                        ta = a_div.get_text(strip=True) if a_div else ""
-                        th = h_div.get_text(strip=True) if h_div else ""
-                        if ta.isdigit() and th.isdigit(): a_score, h_score = ta, th
+                        if a_div and h_div:
+                            ta, th = a_div.get_text(strip=True), h_div.get_text(strip=True)
+                            if ta.isdigit() and th.isdigit(): a_score, h_score = ta, th
                         
                     if a_score.isdigit() and h_score.isdigit():
-                        prefix = f"{g_state} " if "회" in g_state else ""
+                        # 수정 반영: '회'가 없으면 [종료]를 붙여줌
+                        prefix = f"{g_state} " if "회" in g_state else f"[{g_state}] "
                         if target in home:
                             state_out = f"{prefix}🔻{target}({h_score}):🔺{away}({a_score})"
                         else:
                             state_out = f"{prefix}🔺{target}({a_score}):🔻{home}({h_score})"
                     else:
-                        # 점수가 없는 경우 (경기 전, 우천 취소 등)
                         vs_text = f"🔻{target} vs 🔺{away}" if target in home else f"🔺{target} vs 🔻{home}"
                         if ":" in g_state or "경기" in g_state or g_state == "상태 불명":
                             state_out = f"[{start_out} 경기예정] {vs_text}" 
                         else:
                             state_out = f"[{g_state}] {vs_text}"
                     
-                    # 속성(Attributes) 데이터 구성
                     attr_data = {
-                        "opponent": away if target in home else home,
-                        "home_away": "Home" if target in home else "Away",
-                        "start_time": start_out,
-                        "status": g_state,
-                        "my_score": h_score if target in home else a_score,
-                        "opp_score": a_score if target in home else h_score
+                        "opponent": away if target in home else home, "home_away": "Home" if target in home else "Away",
+                        "start_time": start_out, "status": g_state,
+                        "my_score": h_score if target in home else a_score, "opp_score": a_score if target in home else h_score
                     }
                     break
                     
@@ -150,13 +146,39 @@ def main():
             
         except Exception as e:
             print(f"스크래핑 중 오류 발생: {e}")
-            traceback.print_exc()
             client.publish(topic_state, "KBO 확인 오류", retain=True)
             
         finally:
             if driver: driver.quit()
             
+        # 기본 대기 시간 설정
         sleep_time = cfg['interval_game'] * 60 if is_playing else cfg['interval_standby'] * 60
+        
+        now = datetime.datetime.now()
+        
+        # 수정 반영: attr_data의 status 값 기준으로 절전 모드 판단
+        current_status = attr_data.get("status", "")
+        
+        # 1. 경기 종료/취소/없음 시 오후 1시까지 절전 모드
+        if not is_playing and ("종료" in current_status or "취소" in current_status or "없음" in current_status or "경기 없음" in state_out):
+            target_1pm = now.replace(hour=13, minute=0, second=0, microsecond=0)
+            if now >= target_1pm:
+                target_1pm += datetime.timedelta(days=1)
+            
+            sleep_time = (target_1pm - now).total_seconds()
+            print(f"[{now.strftime('%H:%M:%S')}] 😴 오늘 업무 종료! 다음 확인(오후 1시)까지 휴식합니다: {target_1pm.strftime('%Y-%m-%d %H:%M')}")
+        
+        # 2. 경기 시작 전일 경우 정각에 깨어나는 스마트 알람 (오후 1시 이후일 때만 작동)
+        elif not is_playing and ":" in start_out:
+            try:
+                g_hour, g_min = map(int, start_out.split(':'))
+                game_dt = now.replace(hour=g_hour, minute=g_min, second=0, microsecond=0)
+                delta_sec = (game_dt - now).total_seconds()
+                if 0 < delta_sec < sleep_time:
+                    print(f"[{now.strftime('%H:%M:%S')}] ⏰ 경기 시작({start_out}) 정각에 깨어납니다.")
+                    sleep_time = delta_sec
+            except: pass
+                
         time.sleep(sleep_time)
 
 if __name__ == "__main__":

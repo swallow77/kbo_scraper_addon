@@ -1,0 +1,1 @@
+# kbo_scraper_addon

@@ -1,4 +1,0 @@
-selenium
-paho-mqtt
-beautifulsoup4
-webdriver-manager

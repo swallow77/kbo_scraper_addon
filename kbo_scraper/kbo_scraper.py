@@ -69,6 +69,7 @@ def main():
         state_out, start_out = "경기 목록 없음", "경기 목록 없음"
         attr_data = {"status": "경기 없음"}
         is_playing = False
+        error_occurred = False  # 오류 발생 여부 플래그
         driver = None
         
         try:
@@ -116,7 +117,6 @@ def main():
                             if ta.isdigit() and th.isdigit(): a_score, h_score = ta, th
                         
                     if a_score.isdigit() and h_score.isdigit():
-                        # 수정 반영: '회'가 없으면 [종료]를 붙여줌
                         prefix = f"{g_state} " if "회" in g_state else f"[{g_state}] "
                         if target in home:
                             state_out = f"{prefix}🔻{target}({h_score}):🔺{away}({a_score})"
@@ -147,37 +147,40 @@ def main():
         except Exception as e:
             print(f"스크래핑 중 오류 발생: {e}")
             client.publish(topic_state, "KBO 확인 오류", retain=True)
+            error_occurred = True  # 오류 플래그 설정
             
         finally:
             if driver: driver.quit()
             
-        # 기본 대기 시간 설정
-        sleep_time = cfg['interval_game'] * 60 if is_playing else cfg['interval_standby'] * 60
-        
-        now = datetime.datetime.now()
-        
-        # 수정 반영: attr_data의 status 값 기준으로 절전 모드 판단
-        current_status = attr_data.get("status", "")
-        
-        # 1. 경기 종료/취소/없음 시 오후 1시까지 절전 모드
-        if not is_playing and ("종료" in current_status or "취소" in current_status or "없음" in current_status or "경기 없음" in state_out):
-            target_1pm = now.replace(hour=13, minute=0, second=0, microsecond=0)
-            if now >= target_1pm:
-                target_1pm += datetime.timedelta(days=1)
+        # 1. 오류 발생 시 5분(300초) 후 재시도
+        if error_occurred:
+            sleep_time = 300
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ 오류로 인해 5분 후 재접속을 시도합니다.")
+        else:
+            # 기본 대기 시간 설정
+            sleep_time = cfg['interval_game'] * 60 if is_playing else cfg['interval_standby'] * 60
             
-            sleep_time = (target_1pm - now).total_seconds()
-            print(f"[{now.strftime('%H:%M:%S')}] 😴 오늘 업무 종료! 다음 확인(오후 1시)까지 휴식합니다: {target_1pm.strftime('%Y-%m-%d %H:%M')}")
-        
-        # 2. 경기 시작 전일 경우 정각에 깨어나는 스마트 알람 (오후 1시 이후일 때만 작동)
-        elif not is_playing and ":" in start_out:
-            try:
-                g_hour, g_min = map(int, start_out.split(':'))
-                game_dt = now.replace(hour=g_hour, minute=g_min, second=0, microsecond=0)
-                delta_sec = (game_dt - now).total_seconds()
-                if 0 < delta_sec < sleep_time:
-                    print(f"[{now.strftime('%H:%M:%S')}] ⏰ 경기 시작({start_out}) 정각에 깨어납니다.")
-                    sleep_time = delta_sec
-            except: pass
+            now = datetime.datetime.now()
+            current_status = attr_data.get("status", "")
+            
+            # 2. 경기 종료/취소/없음 시 오후 1시까지 절전 모드
+            if not is_playing and ("종료" in current_status or "취소" in current_status or "없음" in current_status or "경기 없음" in state_out):
+                target_1pm = now.replace(hour=13, minute=0, second=0, microsecond=0)
+                if now >= target_1pm:
+                    target_1pm += datetime.timedelta(days=1)
+                sleep_time = (target_1pm - now).total_seconds()
+                print(f"[{now.strftime('%H:%M:%S')}] 😴 업무 종료. 다음 확인(오후 1시)까지 휴식: {target_1pm.strftime('%Y-%m-%d %H:%M')}")
+            
+            # 3. 경기 시작 전 정각 알람
+            elif not is_playing and ":" in start_out:
+                try:
+                    g_hour, g_min = map(int, start_out.split(':'))
+                    game_dt = now.replace(hour=g_hour, minute=g_min, second=0, microsecond=0)
+                    delta_sec = (game_dt - now).total_seconds()
+                    if 0 < delta_sec < sleep_time:
+                        print(f"[{now.strftime('%H:%M:%S')}] ⏰ 경기 시간({start_out}) 정각에 깨어납니다.")
+                        sleep_time = delta_sec
+                except: pass
                 
         time.sleep(sleep_time)
 

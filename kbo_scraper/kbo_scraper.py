@@ -157,18 +157,16 @@ def main():
                         ta, th = a_div.get_text(strip=True), h_div.get_text(strip=True)
                         if ta.isdigit() and th.isdigit(): a_score, h_score = ta, th
                         
-                    if a_score.isdigit() and h_score.isdigit():
-                        prefix = f"{g_status_raw} " if "회" in g_status_raw else f"[{g_status_raw}] "
-                        if target in home:
-                            state_out = f"{prefix}🔻{target}({h_score}):🔺{away}({a_score})"
-                        else:
-                            state_out = f"{prefix}🔺{target}({a_score}):🔻{home}({h_score})"
-                    else:
-                        vs_text = f"🔻{target} vs 🔺{away}" if target in home else f"🔺{target} vs 🔻{home}"
-                        if ":" in g_status_raw or "경기" in g_status_raw or g_status_raw == "상태 불명":
-                            state_out = f"[{start_out} 경기예정] {vs_text}" 
-                        else:
-                            state_out = f"[{g_status_raw}] {vs_text}"
+                    # 점수가 아직 없는 '경기 전' 상태를 더 명확하게 처리
+if a_score.isdigit() and h_score.isdigit():
+    prefix = f"{g_status_raw} " if "회" in g_status_raw else f"[{g_status_raw}] "
+    state_out = f"{prefix}🔻{target}({h_score}):🔺{away}({a_score})" if target in home else f"{prefix}🔺{target}({a_score}):🔻{home}({h_score})"
+else:
+    # 점수가 숫자가 아닐 때(경기 전) 처리 강화
+    vs_text = f"🔻{target} vs 🔺{away}" if target in home else f"🔺{target} vs 🔻{home}"
+    # 상태가 시간이거나 '경기전'일 때 출력 형식 통일
+    display_status = g_status_raw if g_status_raw else "경기예정"
+    state_out = f"[{start_out} {display_status}] {vs_text}"
                     
                     attr_data = {
                         "opponent": away if target in home else home, 

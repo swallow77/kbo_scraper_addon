@@ -8,7 +8,7 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 from bs4 import BeautifulSoup
 import paho.mqtt.client as mqtt
 
-# 로그 실시간 출력을 위한 설정
+# 로그 즉시 출력을 위한 설정
 sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8', line_buffering=True)
 sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8', line_buffering=True)
 
@@ -37,7 +37,6 @@ def init_driver():
     options.add_argument("--window-size=1920,1080")
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
     
-    # 봇 감지 우회
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
     
@@ -65,7 +64,6 @@ def main():
     try:
         client.connect(cfg['mqtt_broker'], cfg['mqtt_port'], 60)
         client.loop_start()
-        # 시작하자마자 센서에 신호를 쏴서 새 코드가 돌고 있음을 알림
         client.publish(topic_state, "🔄 데이터 읽는 중...", retain=True)
     except Exception as e:
         print(f"❌ MQTT 연결 실패: {e}", flush=True)
@@ -81,9 +79,8 @@ def main():
             driver = init_driver()
             driver.get("https://www.koreabaseball.com/Schedule/GameCenter/Main.aspx")
             
-            # 페이지 로딩 대기 강화
-            WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.CSS_SELECTOR, "li.game-cont")))
-            time.sleep(5) # JS 렌더링 완료를 위한 여유 시간
+            WebDriverWait(driver, 35).until(EC.presence_of_element_located((By.CSS_SELECTOR, "li.game-cont")))
+            time.sleep(5)
             
             soup = BeautifulSoup(driver.page_source, 'html.parser')
             items = soup.find_all('li', class_='game-cont')
@@ -102,7 +99,6 @@ def main():
                     g_status_raw = status_tag.get_text(strip=True) if status_tag else "상태불명"
                     if "회" in g_status_raw: is_playing = True
                     
-                    # 점수 추출 (다양한 클래스 대응)
                     a_score, h_score = "", ""
                     a_div = item.select_one('div.team.away div.score')
                     h_div = item.select_one('div.team.home div.score')
@@ -133,26 +129,26 @@ def main():
             print(f"✅ 업데이트: {state_out}", flush=True)
 
         except Exception as e:
+            # ★ 여기 들여쓰기가 중요합니다 ★
+            full_error = traceback.format_exc()
             err_detail = str(e).split('\n')[0][:30]
-            print(f"❌ 스크래핑 에러: {traceback.format_exc()}", flush=True)
-            # 센서에 에러명을 직접 찍어서 범인을 찾음
+            print(f"❌ 스크래핑 에러 상세:\n{full_error}", flush=True)
             client.publish(topic_state, f"⚠️ 오류: {err_detail}", retain=True)
             error_occurred = True
             
         finally:
             if driver: driver.quit()
 
-        # 스케줄링
         now = datetime.datetime.now()
         if error_occurred:
-            sleep_time = 300 # 에러 시 5분 재시도
+            sleep_time = 300 
         else:
             sleep_time = cfg['interval_game'] * 60 if is_playing else cfg['interval_standby'] * 60
             if not is_playing and ("종료" in g_status_raw or "취소" in g_status_raw or "경기 없음" in state_out):
                 target_1pm = now.replace(hour=13, minute=0, second=0, microsecond=0)
                 if now >= target_1pm: target_1pm += datetime.timedelta(days=1)
                 sleep_time = (target_1pm - now).total_seconds()
-                print(f"😴 절전 모드 (오후 1시 기상)", flush=True)
+                print(f"😴 절전 모드 진입", flush=True)
             elif not is_playing and ":" in start_out:
                 try:
                     gh, gm = map(int, start_out.split(':'))

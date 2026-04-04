@@ -85,8 +85,22 @@ def main():
             print(f"✅ MQTT 서버({cfg['mqtt_broker']}) 연결 성공!", flush=True)
             break
         except Exception as e:
-            print(f"❌ MQTT 연결 실패, 5초 후 재시도... ({e})", flush=True)
-            time.sleep(5)
+    # 1. 어떤 에러인지 상세히 기록
+    full_error = traceback.format_exc()
+    # 2. 만약 페이지 소스를 가져올 수 있다면, 앞부분 200자만 잘라서 센서로 쏩니다.
+    debug_html = ""
+    if driver:
+        try:
+            debug_html = driver.page_source[:200].replace('\n', ' ')
+        except:
+            debug_html = "페이지 소스 확보 실패"
+    
+    # 3. MQTT 센서에 범인 검거 메시지 전송
+    error_summary = f"❌ {str(e)[:20]} | HTML: {debug_html}"
+    client.publish(topic_state, error_summary, retain=True)
+    
+    print(f"🚨 [에러 검거] 상세내용:\n{full_error}", flush=True)
+    error_occurred = True
 
     while True:
         if not is_season(cfg):

@@ -145,9 +145,23 @@ def main():
             client.publish(topic_attr, json.dumps(attr_data, ensure_ascii=False), retain=True)
             
         except Exception as e:
-            print(f"스크래핑 중 오류 발생: {e}")
+            # 1. 버퍼링을 무시하고 즉시 로그 출력 (flush=True)
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚨 스크래핑 중 오류 발생: {e}", flush=True)
+            traceback.print_exc(file=sys.stdout)
+            sys.stdout.flush()
+            
+            # 2. 브라우저가 막힌 화면을 사진으로 찍어서 HA 폴더에 저장
+            if driver:
+                try:
+                    driver.save_screenshot('/share/kbo_error.png')
+                    with open('/share/kbo_error.html', 'w', encoding='utf-8') as f:
+                        f.write(driver.page_source)
+                    print("📸 원인 파악을 위해 /share 폴더에 화면 캡처(kbo_error.png)가 저장되었습니다!", flush=True)
+                except Exception as ex:
+                    print(f"스크린샷 저장 실패: {ex}", flush=True)
+                    
             client.publish(topic_state, "KBO 확인 오류", retain=True)
-            error_occurred = True  # 오류 플래그 설정
+            error_occurred = True
             
         finally:
             if driver: driver.quit()

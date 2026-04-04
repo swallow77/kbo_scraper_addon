@@ -1,0 +1,31 @@
+{
+  "name": "KBO Smart Scraper",
+  "version": "1.0.0",
+  "slug": "kbo_smart_scraper",
+  "description": "KBO 경기 일정을 스크래핑하여 MQTT 센서로 전송하는 스마트 애드온입니다.",
+  "arch": ["aarch64", "amd64", "armv7", "armhf"],
+  "startup": "application",
+  "boot": "auto",
+  "options": {
+    "target_team": "LG",
+    "mqtt_broker": "192.168.0.40",
+    "mqtt_port": 1883,
+    "mqtt_username": "admin",
+    "mqtt_password": "swallow77!",
+    "season_start": "03-20",
+    "season_end": "11-30",
+    "interval_standby": 60,
+    "interval_game": 1
+  },
+  "schema": {
+    "target_team": "list(LG|KIA|SSG|NC|두산|KT|롯데|한화|삼성|키움)",
+    "mqtt_broker": "str",
+    "mqtt_port": "port",
+    "mqtt_username": "str",
+    "mqtt_password": "password",
+    "season_start": "str",
+    "season_end": "str",
+    "interval_standby": "int",
+    "interval_game": "int"
+  }
+}

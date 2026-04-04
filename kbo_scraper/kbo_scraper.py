@@ -4,9 +4,9 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 from bs4 import BeautifulSoup
 import paho.mqtt.client as mqtt
-from selenium.common.exceptions import TimeoutException
 
 sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
@@ -47,6 +47,7 @@ def main():
     
     topic_state = f"kbo/{eng_team}_sensor/state"
     topic_start = f"kbo/{eng_team}_sensor/starttime"
+    topic_attr = f"kbo/{eng_team}_sensor/attributes"
 
     client = mqtt.Client()
     if cfg['mqtt_username']: 
@@ -66,13 +67,20 @@ def main():
             continue
 
         state_out, start_out = "경기 목록 없음", "경기 목록 없음"
+        attr_data = {"status": "경기 없음"}
         is_playing = False
         driver = None
         
         try:
+            print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] KBO 웹페이지 로딩 시도...")
             driver = init_driver()
             driver.get("https://www.koreabaseball.com/Schedule/GameCenter/Main.aspx")
-            WebDriverWait(driver, 50).until(EC.presence_of_element_located((By.CSS_SELECTOR, "li.game-cont")))
+            
+            try:
+                WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.CSS_SELECTOR, "li.game-cont")))
+            except TimeoutException:
+                print("경기 요소 로딩 시간 초과 (오늘 경기가 없거나 KBO 사이트 지연)")
+
             time.sleep(3)
             soup = BeautifulSoup(driver.page_source, 'html.parser')
             
@@ -114,16 +122,35 @@ def main():
                         else:
                             state_out = f"{prefix}🔺{target}({a_score}):🔻{home}({h_score})"
                     else:
-                        state_out = g_state
+                        # 점수가 없는 경우 (경기 전, 우천 취소 등)
+                        vs_text = f"🔻{target} vs 🔺{away}" if target in home else f"🔺{target} vs 🔻{home}"
+                        if ":" in g_state or "경기" in g_state or g_state == "상태 불명":
+                            state_out = f"[{start_out} 경기예정] {vs_text}" 
+                        else:
+                            state_out = f"[{g_state}] {vs_text}"
+                    
+                    # 속성(Attributes) 데이터 구성
+                    attr_data = {
+                        "opponent": away if target in home else home,
+                        "home_away": "Home" if target in home else "Away",
+                        "start_time": start_out,
+                        "status": g_state,
+                        "my_score": h_score if target in home else a_score,
+                        "opp_score": a_score if target in home else h_score
+                    }
                     break
                     
             if not found: 
                 state_out, start_out = f"오늘 {target} 경기 없음", f"오늘 {target} 경기 없음"
+                attr_data = {"status": "경기 없음"}
             
             client.publish(topic_state, state_out, retain=True)
             client.publish(topic_start, start_out, retain=True)
-            client.publish(f"kbo/{eng_team}_sensor/attributes", json.dumps(attr_data, ensure_ascii=False), retain=True)
+            client.publish(topic_attr, json.dumps(attr_data, ensure_ascii=False), retain=True)
+            
         except Exception as e:
+            print(f"스크래핑 중 오류 발생: {e}")
+            traceback.print_exc()
             client.publish(topic_state, "KBO 확인 오류", retain=True)
             
         finally:

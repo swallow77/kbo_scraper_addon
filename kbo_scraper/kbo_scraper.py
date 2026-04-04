@@ -121,7 +121,7 @@ def main():
             
             client.publish(topic_state, state_out, retain=True)
             client.publish(topic_start, start_out, retain=True)
-            
+            client.publish(f"kbo/{eng_team}_sensor/attributes", json.dumps(attr_data, ensure_ascii=False), retain=True)
         except Exception as e:
             client.publish(topic_state, "KBO 확인 오류", retain=True)
             

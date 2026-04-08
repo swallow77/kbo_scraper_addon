@@ -54,18 +54,16 @@ def is_in_season(cfg):
         return start <= now <= end
     except Exception as e:
         print(f"⚠️  시즌 체크 오류: {e}", flush=True)
-        return True  # 오류 시 강제 진행
+        return True
 
 # ──────────────────────────────────────────────
 # 웹드라이버 초기화 (컨테이너 환경 최적화)
 # ──────────────────────────────────────────────
 def init_driver():
     options = webdriver.ChromeOptions()
-
-    # 컨테이너/Docker 필수 옵션
-    options.add_argument("--headless=new")          # 최신 헤드리스 모드
-    options.add_argument("--no-sandbox")            # Docker 필수
-    options.add_argument("--disable-dev-shm-usage") # /dev/shm 사이즈 문제 우회
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-software-rasterizer")
     options.add_argument("--disable-extensions")
@@ -78,23 +76,17 @@ def init_driver():
     options.add_argument("--no-first-run")
     options.add_argument("--safebrowsing-disable-auto-update")
     options.add_argument("--window-size=1280,800")
-    options.add_argument("--single-process")        # 저메모리 환경 안정화
+    options.add_argument("--single-process")
     options.add_argument("--memory-pressure-off")
-
-    # User-Agent (봇 탐지 우회)
     options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
-
-    # 자동화 감지 우회
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
-    # chromedriver 경로: 시스템 설치본 우선
     chromedriver_path = "/usr/bin/chromedriver"
     if not os.path.exists(chromedriver_path):
-        # Debian 계열 대체 경로
         for alt in ["/usr/lib/chromium/chromedriver", "/usr/local/bin/chromedriver"]:
             if os.path.exists(alt):
                 chromedriver_path = alt
@@ -103,8 +95,6 @@ def init_driver():
     print(f"🔧 ChromeDriver 경로: {chromedriver_path}", flush=True)
     service = Service(executable_path=chromedriver_path)
     driver = webdriver.Chrome(service=service, options=options)
-
-    # webdriver 속성 숨기기
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
         "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     })
@@ -182,24 +172,23 @@ def main():
             continue
 
         # ── 스크래핑 ──────────────────────────────
-        is_playing    = False
+        is_playing     = False
         error_occurred = False
-        state_out     = "데이터 없음"
-        start_out     = "00:00"
-        g_status_raw  = "정보 없음"
-        attr_data     = {"status": "대기", "last_update": ts}
-        driver        = None
+        state_out      = "데이터 없음"
+        start_out      = "00:00"
+        g_status_raw   = "정보 없음"
+        attr_data      = {"status": "대기", "last_update": ts}
+        driver         = None
 
         try:
             print(f"[{ts}] 🔍 KBO 접속 중...", flush=True)
             driver = init_driver()
             driver.get("https://www.koreabaseball.com/Schedule/GameCenter/Main.aspx")
 
-            # 게임 목록 로딩 대기 (최대 40초)
             WebDriverWait(driver, 40).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "li.game-cont"))
             )
-            time.sleep(3)  # JS 렌더링 여유
+            time.sleep(3)
 
             soup  = BeautifulSoup(driver.page_source, 'html.parser')
             items = soup.find_all('li', class_='game-cont')
@@ -223,7 +212,7 @@ def main():
                 time_li = item.select_one('div.top > ul > li:nth-child(3)')
                 start_out = time_li.get_text(strip=True) if time_li else "시간미정"
 
-                # 상태 텍스트 (예: "3회", "종료", "취소", "경기전" 등)
+                # 상태 텍스트
                 status_tag = item.find('p', class_='staus')
                 g_status_raw = status_tag.get_text(strip=True) if status_tag else "상태불명"
                 if "회" in g_status_raw:
@@ -231,8 +220,8 @@ def main():
 
                 # 점수 추출
                 a_score, h_score = extract_score(item)
-                my_score  = h_score if is_home else a_score
-                opp_score = a_score if is_home else h_score
+                my_score   = h_score if is_home else a_score
+                opp_score  = a_score if is_home else h_score
                 my_symbol  = "🔻" if is_home else "🔺"
                 opp_symbol = "🔺" if is_home else "🔻"
 
@@ -243,7 +232,6 @@ def main():
                         f":{opp_symbol}{opponent}({opp_score})"
                     )
                 else:
-                    # 점수 없음 → 시작 전 or 상태만 표시
                     state_out = f"[{start_out} {g_status_raw}] {my_symbol}{target} vs {opp_symbol}{opponent}"
 
                 attr_data = {
@@ -294,14 +282,14 @@ def main():
             if driver:
                 try:
                     driver.quit()
-                except:
+                except Exception:
                     pass
 
         # ── 대기 시간 계산 ────────────────────────
         now = datetime.datetime.now()
 
         if error_occurred:
-            sleep_time = 300  # 5분 후 재시도
+            sleep_time = 300
             print(f"[{now.strftime('%H:%M:%S')}] ⏳ 오류 발생, {sleep_time}초 후 재시도", flush=True)
 
         elif is_playing:
@@ -309,7 +297,6 @@ def main():
             print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 중 - {sleep_time}초 후 갱신", flush=True)
 
         elif "종료" in g_status_raw or "취소" in g_status_raw or "경기없음" in g_status_raw:
-            # 다음날 오후 1시까지 절전
             target_dt = now.replace(hour=13, minute=0, second=0, microsecond=0)
             if now >= target_dt:
                 target_dt += datetime.timedelta(days=1)
@@ -317,18 +304,29 @@ def main():
             print(f"[{now.strftime('%H:%M:%S')}] 😴 절전 모드 - {int(sleep_time/3600)}시간 {int((sleep_time%3600)/60)}분 후 재개", flush=True)
 
         else:
-            # 경기 전 → 기본 대기 (시작 시간 직전은 더 짧게)
+            # 경기 전 대기
             sleep_time = cfg['interval_standby'] * 60
             if ":" in start_out:
                 try:
                     gh, gm = map(int, start_out.split(':'))
                     game_dt = now.replace(hour=gh, minute=gm, second=0, microsecond=0)
                     delta = (game_dt - now).total_seconds()
-                    if 0 < delta < sleep_time:
+
+                    if delta <= 0:
+                        # ★ 수정: 경기 시작 시간이 지났는데 아직 "회" 상태 아님
+                        # → 경기 막 시작했거나 딜레이 상태 → 1분 간격으로 빠르게 체크
+                        sleep_time = cfg['interval_game'] * 60
+                        print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 시작 시간 경과 - {int(sleep_time)}초 간격으로 체크", flush=True)
+                    elif delta < sleep_time:
+                        # 시작 시간이 60분보다 가까움 → 시작 시간에 맞춰 단축
                         sleep_time = max(60, delta)
+                        print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 {int(delta/60)}분 전 - {int(sleep_time)}초 후 갱신", flush=True)
+                    else:
+                        print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - {int(sleep_time/60)}분 후 갱신", flush=True)
                 except Exception:
-                    pass
-            print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - {int(sleep_time/60)}분 후 갱신", flush=True)
+                    print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - {int(sleep_time/60)}분 후 갱신", flush=True)
+            else:
+                print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - {int(sleep_time/60)}분 후 갱신", flush=True)
 
         time.sleep(sleep_time)
 

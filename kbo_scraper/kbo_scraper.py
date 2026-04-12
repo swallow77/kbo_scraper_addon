@@ -211,6 +211,7 @@ def main():
                 # 시작 시간
                 time_li = item.select_one('div.top > ul > li:nth-child(3)')
                 start_out = time_li.get_text(strip=True) if time_li else "시간미정"
+                print(f"[{ts}] 🕐 start_out 원본값: '{start_out}'", flush=True)  # ← 이 줄 추가
 
                 # 상태 텍스트
                 status_tag = item.find('p', class_='staus')
@@ -305,6 +306,8 @@ def main():
 
         else:
             sleep_time = cfg['interval_standby'] * 60
+            print(f"[{now.strftime('%H:%M:%S')}] 🔎 경기 전 분기 - start_out='{start_out}'", flush=True)  # ← 추가
+
             if ":" in start_out:
                 try:
                     parts = start_out.strip().split(':')
@@ -312,7 +315,7 @@ def main():
                     game_dt = now.replace(hour=gh, minute=gm, second=0, microsecond=0)
                     delta = (game_dt - now).total_seconds()
                     print(f"[{now.strftime('%H:%M:%S')}] 🕐 start_out='{start_out}' delta={int(delta)}초", flush=True)
-        
+
                     if delta <= 0:
                         sleep_time = cfg['interval_game'] * 60
                         print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 시작 시간 경과 - {int(sleep_time)}초 간격으로 체크", flush=True)

@@ -211,7 +211,7 @@ def main():
                 # 시작 시간
                 time_li = item.select_one('div.top > ul > li:nth-child(3)')
                 start_out = time_li.get_text(strip=True) if time_li else "시간미정"
-                print(f"[{ts}] 🕐 start_out 원본값: '{start_out}'", flush=True)  # ← 이 줄 추가
+                print(f"[{ts}] 🕐 start_out 원본값: '{start_out}'", flush=True)
 
                 # 상태 텍스트
                 status_tag = item.find('p', class_='staus')
@@ -305,25 +305,28 @@ def main():
             print(f"[{now.strftime('%H:%M:%S')}] 😴 절전 모드 - {int(sleep_time/3600)}시간 {int((sleep_time%3600)/60)}분 후 재개", flush=True)
 
         else:
+            # 경기 전 대기
             sleep_time = cfg['interval_standby'] * 60
-            print(f"[{now.strftime('%H:%M:%S')}] 🔎 경기 전 분기 - start_out='{start_out}'", flush=True)  # ← 추가
-
             if ":" in start_out:
                 try:
+                    # ★ parts[0], parts[1] 로 안전하게 파싱 (14:00:00 형태도 대응)
                     parts = start_out.strip().split(':')
-                    gh, gm = int(parts[0]), int(parts[1])  # 앞 두 개만 사용
+                    gh, gm = int(parts[0]), int(parts[1])
                     game_dt = now.replace(hour=gh, minute=gm, second=0, microsecond=0)
                     delta = (game_dt - now).total_seconds()
                     print(f"[{now.strftime('%H:%M:%S')}] 🕐 start_out='{start_out}' delta={int(delta)}초", flush=True)
 
-                    if delta <= 0:
+                    if delta <= 300:
+                        # ★ 시작 10분 전 ~ 시작 후 (지연 포함) → 1분 간격으로 체크
                         sleep_time = cfg['interval_game'] * 60
-                        print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 시작 시간 경과 - {int(sleep_time)}초 간격으로 체크", flush=True)
+                        print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 임박/시작/지연 - {int(sleep_time)}초 간격 체크", flush=True)
                     elif delta < sleep_time:
+                        # 시작까지 60분 미만 → 남은 시간만큼 대기
                         sleep_time = max(60, delta)
-                        print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 {int(delta/60)}분 전 - {int(sleep_time)}초 후 갱신", flush=True)
+                        print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 {int(delta/60)}분 전 - {int(sleep_time/60)}분 후 갱신", flush=True)
                     else:
                         print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - {int(sleep_time/60)}분 후 갱신", flush=True)
+
                 except Exception as parse_err:
                     print(f"[{now.strftime('%H:%M:%S')}] ⚠️ 시간 파싱 오류: start_out='{start_out}' err={parse_err}", flush=True)
             else:

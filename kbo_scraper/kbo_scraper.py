@@ -304,27 +304,25 @@ def main():
             print(f"[{now.strftime('%H:%M:%S')}] 😴 절전 모드 - {int(sleep_time/3600)}시간 {int((sleep_time%3600)/60)}분 후 재개", flush=True)
 
         else:
-            # 경기 전 대기
             sleep_time = cfg['interval_standby'] * 60
             if ":" in start_out:
                 try:
-                    gh, gm = map(int, start_out.split(':'))
+                    parts = start_out.strip().split(':')
+                    gh, gm = int(parts[0]), int(parts[1])  # 앞 두 개만 사용
                     game_dt = now.replace(hour=gh, minute=gm, second=0, microsecond=0)
                     delta = (game_dt - now).total_seconds()
-
+                    print(f"[{now.strftime('%H:%M:%S')}] 🕐 start_out='{start_out}' delta={int(delta)}초", flush=True)
+        
                     if delta <= 0:
-                        # ★ 수정: 경기 시작 시간이 지났는데 아직 "회" 상태 아님
-                        # → 경기 막 시작했거나 딜레이 상태 → 1분 간격으로 빠르게 체크
                         sleep_time = cfg['interval_game'] * 60
                         print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 시작 시간 경과 - {int(sleep_time)}초 간격으로 체크", flush=True)
                     elif delta < sleep_time:
-                        # 시작 시간이 60분보다 가까움 → 시작 시간에 맞춰 단축
                         sleep_time = max(60, delta)
                         print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 {int(delta/60)}분 전 - {int(sleep_time)}초 후 갱신", flush=True)
                     else:
                         print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - {int(sleep_time/60)}분 후 갱신", flush=True)
-                except Exception:
-                    print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - {int(sleep_time/60)}분 후 갱신", flush=True)
+                except Exception as parse_err:
+                    print(f"[{now.strftime('%H:%M:%S')}] ⚠️ 시간 파싱 오류: start_out='{start_out}' err={parse_err}", flush=True)
             else:
                 print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - {int(sleep_time/60)}분 후 갱신", flush=True)
 

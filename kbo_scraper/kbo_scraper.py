@@ -290,26 +290,31 @@ def main():
         now = datetime.datetime.now()
 
         if error_occurred:
+            # 오류 → 5분 후 재시도
             sleep_time = 300
             print(f"[{now.strftime('%H:%M:%S')}] ⏳ 오류 발생, {sleep_time}초 후 재시도", flush=True)
 
         elif is_playing:
+            # 경기 진행 중 → 1분 간격
             sleep_time = cfg['interval_game'] * 60
             print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 중 - {sleep_time}초 후 갱신", flush=True)
 
         elif "종료" in g_status_raw or "취소" in g_status_raw or "경기없음" in g_status_raw:
+            # 경기 종료/취소/없음 → 다음날 오후 1시까지 절전
             target_dt = now.replace(hour=13, minute=0, second=0, microsecond=0)
             if now >= target_dt:
                 target_dt += datetime.timedelta(days=1)
             sleep_time = max(60, (target_dt - now).total_seconds())
-            print(f"[{now.strftime('%H:%M:%S')}] 😴 절전 모드 - {int(sleep_time/3600)}시간 {int((sleep_time%3600)/60)}분 후 재개", flush=True)
+            wakeup = target_dt.strftime('%m/%d %H:%M')
+            print(f"[{now.strftime('%H:%M:%S')}] 😴 절전 모드 → {wakeup} 에 경기 시간 확인 "
+                  f"({int(sleep_time/3600)}시간 {int((sleep_time%3600)/60)}분 후)", flush=True)
 
         else:
-            # 경기 전 대기
-            sleep_time = cfg['interval_standby'] * 60
+            # ★ 경기 전 → 시작 5분 전까지 한 번에 슬립, 5분 전부터 1분 간격
+            sleep_time = cfg['interval_standby'] * 60  # 파싱 실패 시 기본값
             if ":" in start_out:
                 try:
-                    # ★ parts[0], parts[1] 로 안전하게 파싱 (14:00:00 형태도 대응)
+                    # "14:00:00" 형태도 안전하게 대응
                     parts = start_out.strip().split(':')
                     gh, gm = int(parts[0]), int(parts[1])
                     game_dt = now.replace(hour=gh, minute=gm, second=0, microsecond=0)
@@ -317,20 +322,22 @@ def main():
                     print(f"[{now.strftime('%H:%M:%S')}] 🕐 start_out='{start_out}' delta={int(delta)}초", flush=True)
 
                     if delta <= 300:
-                        # ★ 시작 10분 전 ~ 시작 후 (지연 포함) → 1분 간격으로 체크
+                        # ★ 5분 전 ~ 시작 후(지연 포함) → 1분 간격
                         sleep_time = cfg['interval_game'] * 60
-                        print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 임박/시작/지연 - {int(sleep_time)}초 간격 체크", flush=True)
-                    elif delta < sleep_time:
-                        # 시작까지 60분 미만 → 남은 시간만큼 대기
-                        sleep_time = max(60, delta)
-                        print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 {int(delta/60)}분 전 - {int(sleep_time/60)}분 후 갱신", flush=True)
+                        print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 임박/시작/지연 - 1분 간격 체크", flush=True)
                     else:
-                        print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - {int(sleep_time/60)}분 후 갱신", flush=True)
+                        # ★ 5분 전 시각까지 한 번에 슬립 (중간 체크 없음)
+                        sleep_time = max(60, delta - 300)
+                        wakeup = (now + datetime.timedelta(seconds=sleep_time)).strftime('%H:%M')
+                        print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 {int(delta/60)}분 전 "
+                              f"→ {wakeup} (5분 전) 에 재개", flush=True)
 
                 except Exception as parse_err:
-                    print(f"[{now.strftime('%H:%M:%S')}] ⚠️ 시간 파싱 오류: start_out='{start_out}' err={parse_err}", flush=True)
+                    print(f"[{now.strftime('%H:%M:%S')}] ⚠️ 시간 파싱 오류: "
+                          f"start_out='{start_out}' err={parse_err}", flush=True)
             else:
-                print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - {int(sleep_time/60)}분 후 갱신", flush=True)
+                print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - "
+                      f"{int(sleep_time/60)}분 후 갱신", flush=True)
 
         time.sleep(sleep_time)
 

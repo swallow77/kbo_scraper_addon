@@ -8,9 +8,36 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 from bs4 import BeautifulSoup
 import paho.mqtt.client as mqtt
 
-# 로그 즉시 출력
-sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8', line_buffering=True)
-sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8', line_buffering=True)
+# ──────────────────────────────────────────────
+# 로그 자동 정리 (Log Rotation) 설정
+# ──────────────────────────────────────────────
+# 저장할 로그 파일 경로 지정 (필요에 따라 변경)
+log_file_path = "/data/kbo_scraper.log" 
+
+logger = logging.getLogger("KBOLogger")
+logger.setLevel(logging.INFO)
+
+# 파일 크기가 5MB를 넘으면 분리, 최대 2개(총 10MB)까지만 유지
+handler = RotatingFileHandler(log_file_path, maxBytes=5*1024*1024, backupCount=2, encoding='utf-8')
+handler.setFormatter(logging.Formatter('%(message)s'))
+logger.addHandler(handler)
+
+# print() 출력을 로거로 가로채는 클래스
+class StreamToLogger:
+    def __init__(self, logger, level):
+        self.logger = logger
+        self.level = level
+
+    def write(self, buf):
+        if buf.strip():  # 빈 줄은 무시하고 로그 기록
+            self.logger.log(self.level, buf.strip())
+
+    def flush(self):
+        pass
+
+# 기존의 로그 즉시 출력(sys.stdout, sys.stderr) 부분을 아래 코드로 대체
+sys.stdout = StreamToLogger(logger, logging.INFO)
+sys.stderr = StreamToLogger(logger, logging.ERROR)
 
 # ──────────────────────────────────────────────
 # 설정 로드

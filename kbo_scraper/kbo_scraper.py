@@ -1,6 +1,4 @@
 import json, time, datetime, sys, io, traceback, os
-import logging
-from logging.handlers import RotatingFileHandler
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -10,36 +8,9 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 from bs4 import BeautifulSoup
 import paho.mqtt.client as mqtt
 
-# ──────────────────────────────────────────────
-# 로그 자동 정리 (Log Rotation) 설정
-# ──────────────────────────────────────────────
-# 저장할 로그 파일 경로 지정 (필요에 따라 변경)
-log_file_path = "/data/kbo_scraper.log" 
-
-logger = logging.getLogger("KBOLogger")
-logger.setLevel(logging.INFO)
-
-# 파일 크기가 5MB를 넘으면 분리, 최대 2개(총 10MB)까지만 유지
-handler = RotatingFileHandler(log_file_path, maxBytes=5*1024*1024, backupCount=2, encoding='utf-8')
-handler.setFormatter(logging.Formatter('%(message)s'))
-logger.addHandler(handler)
-
-# print() 출력을 로거로 가로채는 클래스
-class StreamToLogger:
-    def __init__(self, logger, level):
-        self.logger = logger
-        self.level = level
-
-    def write(self, buf):
-        if buf.strip():  # 빈 줄은 무시하고 로그 기록
-            self.logger.log(self.level, buf.strip())
-
-    def flush(self):
-        pass
-
-# 기존의 로그 즉시 출력(sys.stdout, sys.stderr) 부분을 아래 코드로 대체
-sys.stdout = StreamToLogger(logger, logging.INFO)
-sys.stderr = StreamToLogger(logger, logging.ERROR)
+# 로그 즉시 출력
+sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8', line_buffering=True)
+sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8', line_buffering=True)
 
 # ──────────────────────────────────────────────
 # 설정 로드
@@ -48,10 +19,10 @@ def load_config():
     try:
         with open('/data/options.json', 'r', encoding='utf-8') as f:
             cfg = json.load(f)
-            print(f"✅ 설정 파일 로드 완료: {cfg}", flush=True)
+            print(f"✅ 설정 로드: 팀={cfg['target_team']}, MQTT={cfg['mqtt_broker']}", flush=True)
             return cfg
     except Exception as e:
-        print(f"⚠️  /data/options.json 로드 실패 ({e}), 기본값 사용", flush=True)
+        print(f"⚠️  설정 로드 실패 ({e}), 기본값 사용", flush=True)
         return {
             "target_team": "LG", "mqtt_broker": "192.168.0.40", "mqtt_port": 1883,
             "mqtt_username": "admin", "mqtt_password": "swallow77!",
@@ -86,7 +57,7 @@ def is_in_season(cfg):
         return True
 
 # ──────────────────────────────────────────────
-# 웹드라이버 초기화 (컨테이너 환경 최적화)
+# 웹드라이버 초기화
 # ──────────────────────────────────────────────
 def init_driver():
     options = webdriver.ChromeOptions()
@@ -121,7 +92,6 @@ def init_driver():
                 chromedriver_path = alt
                 break
 
-    print(f"🔧 ChromeDriver 경로: {chromedriver_path}", flush=True)
     service = Service(executable_path=chromedriver_path)
     driver = webdriver.Chrome(service=service, options=options)
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
@@ -151,8 +121,6 @@ def init_mqtt(cfg):
 # 점수 추출 헬퍼
 # ──────────────────────────────────────────────
 def extract_score(item):
-    """away/home 점수를 (away_score, home_score) 형태로 반환. 없으면 ("", "")"""
-    # 방식 1: 경기 진행 중 (div.score > strong.away / strong.home)
     score_div = item.find('div', class_='score')
     if score_div:
         a_tag = score_div.find('strong', class_='away')
@@ -162,7 +130,6 @@ def extract_score(item):
             if a.isdigit() and h.isdigit():
                 return a, h
 
-    # 방식 2: 경기 종료 (div.team.away div.score / div.team.home div.score)
     a_div = item.select_one('div.team.away div.score')
     h_div = item.select_one('div.team.home div.score')
     if a_div and h_div:
@@ -187,6 +154,8 @@ def main():
 
     client = init_mqtt(cfg)
 
+    prev_state = None  # 이전 상태 저장 (변경 시에만 로그 출력)
+
     while True:
         now = datetime.datetime.now()
         ts  = now.strftime('%H:%M:%S')
@@ -196,7 +165,9 @@ def main():
             msg = f"⚾ 시즌 외 ({now.strftime('%m/%d')})"
             client.publish(topic_state, msg, retain=True)
             client.publish(topic_start, "00:00", retain=True)
-            print(f"[{ts}] {msg}", flush=True)
+            if prev_state != msg:
+                print(f"[{ts}] {msg}", flush=True)
+                prev_state = msg
             time.sleep(cfg['interval_standby'] * 60)
             continue
 
@@ -210,7 +181,6 @@ def main():
         driver         = None
 
         try:
-            print(f"[{ts}] 🔍 KBO 접속 중...", flush=True)
             driver = init_driver()
             driver.get("https://www.koreabaseball.com/Schedule/GameCenter/Main.aspx")
 
@@ -221,7 +191,6 @@ def main():
 
             soup  = BeautifulSoup(driver.page_source, 'html.parser')
             items = soup.find_all('li', class_='game-cont')
-            print(f"[{ts}] 발견된 경기 수: {len(items)}", flush=True)
 
             found = False
             for item in items:
@@ -229,7 +198,6 @@ def main():
                 home_nm = item.get('home_nm', '')
                 if not away_nm or not home_nm:
                     continue
-
                 if target not in away_nm and target not in home_nm:
                     continue
 
@@ -237,18 +205,14 @@ def main():
                 is_home    = target in home_nm
                 opponent   = away_nm if is_home else home_nm
 
-                # 시작 시간
                 time_li = item.select_one('div.top > ul > li:nth-child(3)')
                 start_out = time_li.get_text(strip=True) if time_li else "시간미정"
-                print(f"[{ts}] 🕐 start_out 원본값: '{start_out}'", flush=True)
 
-                # 상태 텍스트
                 status_tag = item.find('p', class_='staus')
                 g_status_raw = status_tag.get_text(strip=True) if status_tag else "상태불명"
                 if "회" in g_status_raw:
                     is_playing = True
 
-                # 점수 추출
                 a_score, h_score = extract_score(item)
                 my_score   = h_score if is_home else a_score
                 opp_score  = a_score if is_home else h_score
@@ -275,7 +239,6 @@ def main():
                     "start_time":  start_out,
                     "last_update": ts
                 }
-                print(f"[{ts}] 경기 발견: {state_out}", flush=True)
                 break
 
             if not found:
@@ -283,13 +246,15 @@ def main():
                 start_out    = "00:00"
                 g_status_raw = "경기없음"
                 attr_data    = {"status": "경기없음", "last_update": ts}
-                print(f"[{ts}] {state_out}", flush=True)
 
-            # MQTT 발행
+            # ★ 상태가 바뀔 때만 로그 출력
+            if state_out != prev_state:
+                print(f"[{ts}] 📢 {state_out}", flush=True)
+                prev_state = state_out
+
             client.publish(topic_state, state_out, retain=True)
             client.publish(topic_start, start_out, retain=True)
             client.publish(topic_attr,  json.dumps(attr_data, ensure_ascii=False), retain=True)
-            print(f"[{ts}] ✅ MQTT 발행 완료", flush=True)
 
         except TimeoutException:
             print(f"[{ts}] ❌ 페이지 로딩 타임아웃", flush=True)
@@ -300,7 +265,7 @@ def main():
             err = str(e).split('\n')[0][:60]
             print(f"[{ts}] ❌ WebDriver 오류: {err}", flush=True)
             traceback.print_exc()
-            client.publish(topic_state, f"⚠️ 드라이버 오류", retain=True)
+            client.publish(topic_state, "⚠️ 드라이버 오류", retain=True)
             error_occurred = True
 
         except Exception as e:
@@ -319,54 +284,41 @@ def main():
         now = datetime.datetime.now()
 
         if error_occurred:
-            # 오류 → 5분 후 재시도
             sleep_time = 300
-            print(f"[{now.strftime('%H:%M:%S')}] ⏳ 오류 발생, {sleep_time}초 후 재시도", flush=True)
+            print(f"[{now.strftime('%H:%M:%S')}] ⏳ 오류 발생, 5분 후 재시도", flush=True)
 
         elif is_playing:
-            # 경기 진행 중 → 1분 간격
             sleep_time = cfg['interval_game'] * 60
-            print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 중 - {sleep_time}초 후 갱신", flush=True)
 
         elif "종료" in g_status_raw or "취소" in g_status_raw or "경기없음" in g_status_raw:
-            # 경기 종료/취소/없음 → 다음날 오후 1시까지 절전
             target_dt = now.replace(hour=13, minute=0, second=0, microsecond=0)
             if now >= target_dt:
                 target_dt += datetime.timedelta(days=1)
             sleep_time = max(60, (target_dt - now).total_seconds())
             wakeup = target_dt.strftime('%m/%d %H:%M')
-            print(f"[{now.strftime('%H:%M:%S')}] 😴 절전 모드 → {wakeup} 에 경기 시간 확인 "
-                  f"({int(sleep_time/3600)}시간 {int((sleep_time%3600)/60)}분 후)", flush=True)
+            print(f"[{now.strftime('%H:%M:%S')}] 😴 절전 → {wakeup} 에 경기 시간 확인", flush=True)
 
         else:
-            # ★ 경기 전 → 시작 5분 전까지 한 번에 슬립, 5분 전부터 1분 간격
-            sleep_time = cfg['interval_standby'] * 60  # 파싱 실패 시 기본값
+            sleep_time = cfg['interval_standby'] * 60
             if ":" in start_out:
                 try:
-                    # "14:00:00" 형태도 안전하게 대응
                     parts = start_out.strip().split(':')
                     gh, gm = int(parts[0]), int(parts[1])
                     game_dt = now.replace(hour=gh, minute=gm, second=0, microsecond=0)
                     delta = (game_dt - now).total_seconds()
-                    print(f"[{now.strftime('%H:%M:%S')}] 🕐 start_out='{start_out}' delta={int(delta)}초", flush=True)
 
                     if delta <= 300:
-                        # ★ 5분 전 ~ 시작 후(지연 포함) → 1분 간격
+                        # 5분 전 ~ 시작 후(지연 포함) → 1분 간격
                         sleep_time = cfg['interval_game'] * 60
-                        print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 임박/시작/지연 - 1분 간격 체크", flush=True)
+                        print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 임박 - 1분 간격 체크", flush=True)
                     else:
-                        # ★ 5분 전 시각까지 한 번에 슬립 (중간 체크 없음)
+                        # 5분 전 시각까지 한 번에 슬립
                         sleep_time = max(60, delta - 300)
                         wakeup = (now + datetime.timedelta(seconds=sleep_time)).strftime('%H:%M')
-                        print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 {int(delta/60)}분 전 "
-                              f"→ {wakeup} (5분 전) 에 재개", flush=True)
+                        print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 {int(delta/60)}분 전 → {wakeup} 에 재개", flush=True)
 
                 except Exception as parse_err:
-                    print(f"[{now.strftime('%H:%M:%S')}] ⚠️ 시간 파싱 오류: "
-                          f"start_out='{start_out}' err={parse_err}", flush=True)
-            else:
-                print(f"[{now.strftime('%H:%M:%S')}] ⏳ 경기 전 대기 - "
-                      f"{int(sleep_time/60)}분 후 갱신", flush=True)
+                    print(f"[{now.strftime('%H:%M:%S')}] ⚠️ 시간 파싱 오류: '{start_out}' {parse_err}", flush=True)
 
         time.sleep(sleep_time)
 

@@ -1,4 +1,6 @@
 import json, time, datetime, sys, io, traceback, os
+import logging
+from logging.handlers import RotatingFileHandler
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By

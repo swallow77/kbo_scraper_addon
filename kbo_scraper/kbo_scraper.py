@@ -80,13 +80,58 @@ def parse_game_date(date_str):
 # 시간 파싱: "18:30" → (18, 30) / 실패 시 None
 # ──────────────────────────────────────────────
 def parse_game_time(time_str):
-    if ":" not in time_str:
+    if not time_str or ":" not in time_str:
         return None
     try:
         parts = time_str.strip().split(':')
         return int(parts[0]), int(parts[1])
     except Exception:
         return None
+
+# ──────────────────────────────────────────────
+# 경기 종료 결과 상태 변환
+# ──────────────────────────────────────────────
+def get_finished_status(raw_status, my_score, opp_score):
+    """
+    선택 팀 기준으로 종료 경기를 경기승리/경기패배/경기무승부로 변환.
+    점수가 없거나 종료 상태가 아니면 원본 상태를 그대로 사용.
+    """
+    if "종료" not in raw_status:
+        return raw_status
+    if not (str(my_score).isdigit() and str(opp_score).isdigit()):
+        return raw_status
+
+    my = int(my_score)
+    opp = int(opp_score)
+    if my > opp:
+        return "경기승리"
+    if my < opp:
+        return "경기패배"
+    return "경기무승부"
+
+# ──────────────────────────────────────────────
+# 다음 확인 시간 계산
+# ──────────────────────────────────────────────
+def tomorrow_13(now):
+    target_dt = now.replace(hour=13, minute=0, second=0, microsecond=0)
+    if now >= target_dt:
+        target_dt += datetime.timedelta(days=1)
+    return target_dt
+
+def next_check_for_game_date(game_date, start_out, now):
+    """
+    오늘 경기가 아니면 불필요한 반복 스크래핑을 막기 위해 다음 확인 시간을 계산.
+    - 미래 경기 + 시간 있음: 경기 5분 전
+    - 미래 경기 + 시간 없음: 해당 경기일 13:00
+    - 과거/알 수 없음: 다음날 13:00
+    """
+    if game_date and game_date > now.date():
+        gt = parse_game_time(start_out)
+        if gt:
+            game_dt = datetime.datetime.combine(game_date, datetime.time(gt[0], gt[1]))
+            return max(now + datetime.timedelta(minutes=1), game_dt - datetime.timedelta(minutes=5))
+        return datetime.datetime.combine(game_date, datetime.time(13, 0))
+    return tomorrow_13(now)
 
 # ──────────────────────────────────────────────
 # 웹드라이버 초기화
@@ -210,7 +255,9 @@ def main():
         state_out      = "데이터 없음"
         start_out      = "00:00"
         g_status_raw   = "정보 없음"
+        display_status = "정보 없음"
         game_date      = None   # ★ 실제 경기 날짜 (datetime.date)
+        next_check_at  = None
         attr_data      = {"status": "대기", "last_update": ts}
         driver         = None
 
@@ -279,22 +326,24 @@ def main():
                 opp_score  = a_score if is_home else h_score
                 my_symbol  = "🔻" if is_home else "🔺"
                 opp_symbol = "🔺" if is_home else "🔻"
+                display_status = get_finished_status(g_status_raw, my_score, opp_score)
 
                 if my_score.isdigit() and opp_score.isdigit():
-                    prefix = f"{g_status_raw} " if "회" in g_status_raw else f"[{g_status_raw}] "
+                    prefix = f"{display_status} " if "회" in display_status else f"[{display_status}] "
                     state_out = (
                         f"{prefix}{my_symbol}{target}({my_score})"
                         f":{opp_symbol}{opponent}({opp_score})"
                     )
                 else:
-                    state_out = f"[{start_out} {g_status_raw}] {my_symbol}{target} vs {opp_symbol}{opponent}"
+                    state_out = f"[{start_out} {display_status}] {my_symbol}{target} vs {opp_symbol}{opponent}"
 
                 attr_data = {
                     "home":        home_nm,
                     "away":        away_nm,
                     "is_home":     is_home,
                     "opponent":    opponent,
-                    "status":      g_status_raw,
+                    "status":      display_status,
+                    "raw_status":  g_status_raw,
                     "my_score":    my_score,
                     "opp_score":   opp_score,
                     "start_time":  start_out,
@@ -307,24 +356,22 @@ def main():
                 state_out    = f"오늘 {target} 경기 없음"
                 start_out    = "00:00"
                 g_status_raw = "경기없음"
+                display_status = "경기없음"
                 attr_data    = {"status": "경기없음", "last_update": ts}
+                next_check_at = tomorrow_13(now)
 
             # ★ 날짜 기반 오탐 감지
             # game_date가 파싱됐고 오늘 날짜가 아니면 → 확실히 오늘 경기 없음
             if found and game_date is not None and game_date != today:
-                # 내일(또는 미래) 경기 → 오늘은 경기 없음으로 처리
-                gt = parse_game_time(start_out)
-                game_dt_future = None
-                if gt:
-                    game_dt_future = datetime.datetime.combine(game_date, datetime.time(gt[0], gt[1]))
-
+                next_check_at = next_check_for_game_date(game_date, start_out, now)
                 state_out    = (
                     f"오늘 {target} 경기 없음 "
                     f"(다음 경기: {game_date.strftime('%m/%d')} {start_out})"
                 )
                 g_status_raw = "경기없음"
+                display_status = "경기없음"
                 attr_data["status"] = "경기없음"
-                attr_data["next_game"] = str(game_dt_future) if game_dt_future else ""
+                attr_data["next_check"] = next_check_at.strftime('%Y-%m-%d %H:%M:%S')
                 is_playing = False
                 print(f"[{ts}] 📅 날짜 불일치! KBO 표시={game_date} / 오늘={today} → 오늘 경기 없음", flush=True)
 
@@ -349,7 +396,7 @@ def main():
             client.publish(topic_state, "⚠️ 드라이버 오류", retain=True)
             error_occurred = True
 
-        except Exception as e:
+        except Exception:
             print(f"[{ts}] ❌ 예외 발생:\n{traceback.format_exc()}", flush=True)
             client.publish(topic_state, "⚠️ 스크래핑 오류", retain=True)
             error_occurred = True
@@ -373,30 +420,19 @@ def main():
             # 경기 진행 중 → 1분 간격
             sleep_time = cfg['interval_game'] * 60
 
-        elif "경기없음" in g_status_raw or "종료" in g_status_raw or "취소" in g_status_raw:
-            # ★ 경기 없음/종료/취소
-            # game_date가 미래 날짜면 → 그 날 5분 전까지 슬립
-            # 아니면 → 내일 오후 1시까지 절전
-            gt = parse_game_time(start_out)
-            if (game_date is not None and game_date > today and gt is not None):
-                # 다음 경기 날짜/시간이 확정됨 → 그 날 5분 전까지 슬립
-                game_dt_future = datetime.datetime.combine(game_date, datetime.time(gt[0], gt[1]))
-                delta = (game_dt_future - now).total_seconds()
-                if delta <= 300:
-                    sleep_time = cfg['interval_game'] * 60
-                    print(f"[{now.strftime('%H:%M:%S')}] ⚾ 경기 임박 - 1분 간격 체크", flush=True)
-                else:
-                    sleep_time = max(60, delta - 300)
-                    wakeup = (now + datetime.timedelta(seconds=sleep_time)).strftime('%m/%d %H:%M')
-                    print(f"[{now.strftime('%H:%M:%S')}] 😴 절전 → {wakeup} ({game_date.strftime('%m/%d')} 경기 5분 전) 에 재개", flush=True)
-            else:
-                # 다음 경기 날짜 모름 → 내일 오후 1시에 확인
-                target_dt = now.replace(hour=13, minute=0, second=0, microsecond=0)
-                if now >= target_dt:
-                    target_dt += datetime.timedelta(days=1)
-                sleep_time = max(60, (target_dt - now).total_seconds())
-                wakeup = target_dt.strftime('%m/%d %H:%M')
-                print(f"[{now.strftime('%H:%M:%S')}] 😴 절전 → {wakeup} 에 경기 일정 확인", flush=True)
+        elif next_check_at is not None:
+            # 경기 없는 날/오늘 경기가 아닌 날 → 계산된 시각까지 절전
+            delta = (next_check_at - now).total_seconds()
+            sleep_time = max(60, delta)
+            wakeup = next_check_at.strftime('%m/%d %H:%M')
+            print(f"[{now.strftime('%H:%M:%S')}] 😴 절전 → {wakeup} 에 경기 일정 확인", flush=True)
+
+        elif "경기없음" in display_status or "종료" in g_status_raw or "취소" in g_status_raw:
+            # 경기 없음/종료/취소 → 내일 오후 1시에 확인
+            target_dt = tomorrow_13(now)
+            sleep_time = max(60, (target_dt - now).total_seconds())
+            wakeup = target_dt.strftime('%m/%d %H:%M')
+            print(f"[{now.strftime('%H:%M:%S')}] 😴 절전 → {wakeup} 에 경기 일정 확인", flush=True)
 
         else:
             # 경기 전 → 5분 전까지 한 번에 슬립

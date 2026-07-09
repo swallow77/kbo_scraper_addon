@@ -279,22 +279,28 @@ def scrape_once(driver, target, prev_state):
             time_li = item.select_one('div.top > ul > li:nth-child(3)')
             time_str = time_li.get_text(strip=True) if time_li else "시간미정"
 
-        start_out = time_str
-        game_date = parse_game_date(date_str) if date_str else None
-
         status_tag = item.find('p', class_='staus')
         g_status_raw = status_tag.get_text(strip=True) if status_tag else "상태불명"
         if "회" in g_status_raw:
             is_playing = True
 
         a_score, h_score = extract_score(item)
+        has_score = a_score.isdigit() and h_score.isdigit()
+        start_out = time_str
+        if date_str:
+            game_date = parse_game_date(date_str)
+        elif is_playing or has_score:
+            game_date = today
+        else:
+            game_date = None
+
         my_score = h_score if is_home else a_score
         opp_score = a_score if is_home else h_score
         my_symbol = "🔻" if is_home else "🔺"
         opp_symbol = "🔺" if is_home else "🔻"
         display_status = get_finished_status(g_status_raw, my_score, opp_score)
 
-        if my_score.isdigit() and opp_score.isdigit():
+        if has_score:
             prefix = f"{display_status} " if "회" in display_status else f"[{display_status}] "
             state_out = (
                 f"{prefix}{my_symbol}{target}({my_score})"

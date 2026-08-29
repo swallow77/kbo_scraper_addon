@@ -1,6 +1,6 @@
 {
   "name": "KBO Smart Scraper",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "slug": "kbo_smart_scraper",
   "description": "KBO 경기 일정을 스크래핑하여 MQTT 센서로 전송하는 스마트 애드온입니다.",
   "url": "https://github.com/swallow77/kbo_scraper_addon",
@@ -13,7 +13,7 @@
     "mqtt_broker": "192.168.0.40",
     "mqtt_port": 1883,
     "mqtt_username": "admin",
-    "mqtt_password": "swallow77!",
+    "mqtt_password": "",
     "season_start": "03-20",
     "season_end": "11-30",
     "interval_standby": 60,

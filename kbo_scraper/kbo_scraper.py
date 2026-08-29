@@ -1,4 +1,5 @@
-import json, time, datetime, sys, io, traceback, os, re
+import json, time, datetime, sys, io, traceback, os, re, signal
+from contextlib import contextmanager
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -14,6 +15,26 @@ sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8', line_buffer
 
 URL = "https://www.koreabaseball.com/Schedule/GameCenter/Main.aspx"
 MAX_DRIVER_REUSE = 30
+SCRAPE_DEADLINE_SECONDS = 55
+
+
+class ScrapeDeadlineExceeded(Exception):
+    """Chrome/WebDriver 호출이 응답하지 않을 때 루프를 되살리기 위한 예외."""
+
+
+@contextmanager
+def scrape_deadline(seconds=SCRAPE_DEADLINE_SECONDS):
+    """단일 스크래핑 시도가 멈춰도 정해진 시간 뒤 다음 재시도로 넘어간다."""
+    def on_timeout(signum, frame):
+        raise ScrapeDeadlineExceeded(f"{seconds}초 안에 응답하지 않았습니다")
+
+    previous_handler = signal.signal(signal.SIGALRM, on_timeout)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 # ──────────────────────────────────────────────
 # 로그 헬퍼
@@ -42,7 +63,7 @@ def load_config():
         log(f"⚠️  설정 로드 실패 ({e}), 기본값 사용")
         return {
             "target_team": "LG", "mqtt_broker": "192.168.0.40", "mqtt_port": 1883,
-            "mqtt_username": "admin", "mqtt_password": "swallow77!",
+            "mqtt_username": "admin", "mqtt_password": "",
             "season_start": "03-20", "season_end": "11-30",
             "interval_standby": 60, "interval_game": 1
         }
@@ -182,7 +203,9 @@ def init_driver():
 def close_driver(driver):
     if driver:
         try:
-            driver.quit()
+            # 응답이 멈춘 Chrome을 정리하는 과정도 다시 멈추지 않도록 제한한다.
+            with scrape_deadline(5):
+                driver.quit()
         except Exception:
             pass
     return None
@@ -396,11 +419,13 @@ def main():
         error_occurred = False
 
         try:
-            if driver is None:
-                driver = init_driver()
-                scrape_count = 0
+            # KBO 페이지 또는 Chrome이 응답하지 않는 경우에도 다음 폴링으로 복구한다.
+            with scrape_deadline():
+                if driver is None:
+                    driver = init_driver()
+                    scrape_count = 0
 
-            result = scrape_once(driver, target, prev_state)
+                result = scrape_once(driver, target, prev_state)
             scrape_count += 1
             consecutive_errors = 0
 
@@ -414,11 +439,14 @@ def main():
             if scrape_count >= MAX_DRIVER_REUSE:
                 driver = close_driver(driver)
 
-        except TimeoutException:
+        except (TimeoutException, ScrapeDeadlineExceeded) as e:
             error_occurred = True
             consecutive_errors += 1
             driver = close_driver(driver)
-            log_error_once("timeout", consecutive_errors, f"[{ts}] ⚠️ KBO 페이지 타임아웃")
+            if isinstance(e, ScrapeDeadlineExceeded):
+                log_error_once("deadline", consecutive_errors, f"[{ts}] ⚠️ KBO 스크래퍼 응답 지연 — Chrome 재시작 후 재시도")
+            else:
+                log_error_once("timeout", consecutive_errors, f"[{ts}] ⚠️ KBO 페이지 타임아웃")
 
         except WebDriverException as e:
             error_occurred = True
